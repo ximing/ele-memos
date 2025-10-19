@@ -140,13 +140,26 @@ npm run make:arm64
 ```
 
 ### 发布
-```bash
-# 构建并发布 (需要配置发布渠道)
-yarn publish
 
-# 或使用npm
-npm run publish
+项目配备了完整的自动化发布系统，支持版本管理、CHANGELOG生成和跨平台构建。
+
+```bash
+# 🚀 快速发布（推荐）
+npm run version:patch    # 升级补丁版本 (1.0.4 -> 1.0.5)
+npm run version:minor    # 升级小版本 (1.0.4 -> 1.1.0)
+npm run version:major    # 升级大版本 (1.0.4 -> 2.0.0)
+
+# 🎯 交互式发布
+npm run bump             # 友好的交互界面
+
+# 👀 预览模式
+npm run release:dry      # 预览发布操作
+npm run changelog:preview # 预览CHANGELOG
 ```
+
+详细使用说明请查看：
+- [📖 发布脚本使用指南](scripts/README.md)
+- [🚀 自动化发布系统概览](docs/RELEASE_SYSTEM.md)
 
 ## 📖 使用说明
 
