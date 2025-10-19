@@ -1,7 +1,7 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { MakerSquirrel } from "@electron-forge/maker-squirrel";
 import { MakerZIP } from "@electron-forge/maker-zip";
-import { MakerDMG } from "@electron-forge/maker-dmg";
+// import { MakerDMG } from "@electron-forge/maker-dmg";  // 暂时禁用 DMG maker
 import { MakerDeb } from "@electron-forge/maker-deb";
 import { MakerRpm } from "@electron-forge/maker-rpm";
 import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
@@ -22,13 +22,14 @@ const config: ForgeConfig = {
   makers: [
     new MakerSquirrel({}),
     new MakerZIP({}, ["darwin"]),
-    new MakerDMG(
-      {
-        icon: "./images/icon.icns",
-        // arch: ["x64", "arm64"],
-      },
-      ["darwin"],
-    ),
+    // 暂时注释掉 DMG maker，因为 macos-alias 与 Node.js 22 不兼容
+    // new MakerDMG(
+    //   {
+    //     icon: "./images/icon.icns",
+    //     // arch: ["x64", "arm64"],
+    //   },
+    //   ["darwin"],
+    // ),
     new MakerRpm({}),
     new MakerDeb({}),
   ],
@@ -40,8 +41,8 @@ const config: ForgeConfig = {
         config: rendererConfig,
         entryPoints: [
           {
-            html: "./src/index.html",
-            js: "./src/renderer.ts",
+            html: "./renderer/index.html",
+            js: "./renderer/src/main.tsx",
             name: "main_window",
             preload: {
               js: "./src/preload.ts",

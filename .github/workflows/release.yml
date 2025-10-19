@@ -1,0 +1,192 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.5)'
+        required: true
+        type: string
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        include:
+          # Windows builds
+          - os: windows-latest
+            arch: x64
+            platform: win32
+
+          # macOS builds
+          - os: macos-latest
+            arch: x64
+            platform: darwin
+          - os: macos-latest
+            arch: arm64
+            platform: darwin
+
+          # Linux builds
+          - os: ubuntu-latest
+            arch: x64
+            platform: linux
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'yarn'
+
+      - name: Setup Python (for native dependencies)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3-dev libatk-bridge2.0-dev libdrm2-dev libxcomposite-dev libxdamage-dev libxrandr-dev libgbm-dev libxss1-dev libasound2-dev
+
+      - name: Install main dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Install renderer dependencies
+        run: |
+          cd renderer
+          yarn install --frozen-lockfile
+
+      - name: Build and package for ${{ matrix.platform }}-${{ matrix.arch }}
+        run: yarn make --arch=${{ matrix.arch }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASS: ${{ secrets.APPLE_ID_PASS }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      - name: List output files
+        run: |
+          echo "Build output:"
+          find out -type f -name "*.exe" -o -name "*.dmg" -o -name "*.deb" -o -name "*.rpm" -o -name "*.zip" -o -name "*.AppImage" | head -20
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: memos-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            out/make/**/*.exe
+            out/make/**/*.dmg
+            out/make/**/*.zip
+            out/make/**/*.deb
+            out/make/**/*.rpm
+            out/make/**/*.AppImage
+          retention-days: 7
+
+  create-release:
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: find artifacts -type f | head -20
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+
+          # Copy all built files to release directory
+          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \) -exec cp {} release-files/ \;
+
+          # List files to be released
+          echo "Files to be released:"
+          ls -la release-files/
+
+      - name: Get version from tag or input
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          name: Memos ${{ steps.get_version.outputs.version }}
+          body: |
+            ## 🎉 Memos ${{ steps.get_version.outputs.version }}
+
+            ### 📦 安装包下载
+
+            **Windows:**
+            - `memos-*-setup.exe` - Windows 安装程序
+
+            **macOS:**
+            - `memos-*.dmg` - macOS 磁盘映像 (推荐)
+            - `memos-darwin-*.zip` - macOS 应用程序包
+
+            **Linux:**
+            - `memos-*.deb` - Debian/Ubuntu 软件包
+            - `memos-*.rpm` - RedHat/Fedora 软件包
+
+            ### 📋 系统要求
+
+            - **Windows**: Windows 10 或更高版本
+            - **macOS**: macOS 10.15 (Catalina) 或更高版本
+            - **Linux**: 支持主流发行版
+
+            ### 🔧 安装说明
+
+            **Windows:**
+            1. 下载 `.exe` 文件
+            2. 双击运行安装程序
+            3. 按照向导完成安装
+
+            **macOS:**
+            1. 下载 `.dmg` 文件
+            2. 双击打开，将应用拖到 Applications 文件夹
+            3. 首次运行可能需要在系统偏好设置中允许运行
+
+            **Linux:**
+            - Ubuntu/Debian: `sudo dpkg -i memos-*.deb`
+            - CentOS/Fedora: `sudo rpm -i memos-*.rpm`
+
+            ---
+
+            完整更新日志请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+          files: release-files/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release assets
+        run: |
+          echo "Release created successfully!"
+          echo "Release URL: ${{ steps.create_release.outputs.url }}"
+          echo "Upload URL: ${{ steps.create_release.outputs.upload_url }}"

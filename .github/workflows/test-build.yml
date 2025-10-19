@@ -1,0 +1,266 @@
+name: Test Build
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      build_all_platforms:
+        description: 'Build for all platforms (otherwise only current platform)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # 快速构建作业：只构建当前平台，用于快速验证
+  quick-build:
+    if: github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'yarn'
+
+      - name: Install system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3-dev libatk-bridge2.0-dev libdrm2-dev libxcomposite-dev libxdamage-dev libxrandr-dev libgbm-dev libxss1-dev libasound2-dev
+
+      - name: Install main dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Install renderer dependencies
+        run: |
+          cd renderer
+          yarn install --frozen-lockfile
+
+      - name: Quick build test
+        run: yarn make --arch=${{ matrix.arch }}
+
+      - name: Upload quick build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-build-${{ github.sha }}
+          path: |
+            out/make/**/*.deb
+            out/make/**/*.rpm
+          retention-days: 3
+
+  # 完整构建作业：构建所有平台，手动触发或特定条件
+  full-build:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_platforms == 'true'
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        include:
+          # Windows builds
+          - os: windows-latest
+            arch: x64
+            platform: win32
+
+          # macOS builds
+          - os: macos-latest
+            arch: x64
+            platform: darwin
+          - os: macos-latest
+            arch: arm64
+            platform: darwin
+
+          # Linux builds
+          - os: ubuntu-latest
+            arch: x64
+            platform: linux
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'yarn'
+
+      - name: Setup Python (for native dependencies)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3-dev libatk-bridge2.0-dev libdrm2-dev libxcomposite-dev libxdamage-dev libxrandr-dev libgbm-dev libxss1-dev libasound2-dev
+
+      - name: Install main dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Install renderer dependencies
+        run: |
+          cd renderer
+          yarn install --frozen-lockfile
+
+      - name: Build and package for ${{ matrix.platform }}-${{ matrix.arch }}
+        run: yarn make --arch=${{ matrix.arch }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASS: ${{ secrets.APPLE_ID_PASS }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-build-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            out/make/**/*.exe
+            out/make/**/*.dmg
+            out/make/**/*.zip
+            out/make/**/*.deb
+            out/make/**/*.rpm
+            out/make/**/*.AppImage
+          retention-days: 7
+
+  # 创建测试版本发布
+  create-test-release:
+    needs: full-build
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_platforms == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+
+          # Copy all built files to release directory
+          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \) -exec cp {} release-files/ \;
+
+          # List files to be released
+          echo "Files to be released:"
+          ls -la release-files/
+
+      - name: Get current date and commit info
+        id: get_info
+        run: |
+          echo "date=$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
+          echo "commit_short=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          echo "commit_message=$(git log -1 --pretty=%B)" >> $GITHUB_OUTPUT
+
+      - name: Delete old test releases
+        run: |
+          # 删除超过 5 个的测试版本发布，保持仓库整洁
+          gh release list --limit 50 | grep "test-" | tail -n +6 | awk '{print $1}' | xargs -r -I {} gh release delete {} --yes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Create Test Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: test-${{ steps.get_info.outputs.date }}-${{ steps.get_info.outputs.commit_short }}
+          name: 🧪 测试版本 ${{ steps.get_info.outputs.date }}-${{ steps.get_info.outputs.commit_short }}
+          body: |
+            ## 🧪 测试版本构建
+
+            **⚠️ 这是一个测试版本，仅用于开发和测试目的，不推荐在生产环境使用。**
+
+            ### 📋 构建信息
+            - **构建时间**: ${{ steps.get_info.outputs.date }}
+            - **提交哈希**: `${{ steps.get_info.outputs.commit_short }}`
+            - **分支**: `${{ github.ref_name }}`
+            - **最新提交**: ${{ steps.get_info.outputs.commit_message }}
+
+            ### 📦 测试安装包
+
+            **Windows:**
+            - `memos-*-setup.exe` - Windows 安装程序
+
+            **macOS:**
+            - `memos-*.dmg` - macOS 磁盘映像
+            - `memos-darwin-*.zip` - macOS 应用程序包
+
+            **Linux:**
+            - `memos-*.deb` - Debian/Ubuntu 软件包
+            - `memos-*.rpm` - RedHat/Fedora 软件包
+
+            ### 🔍 测试说明
+
+            1. **备份数据**: 使用前请备份重要数据
+            2. **已知问题**: 可能包含未修复的 bug
+            3. **反馈渠道**: 发现问题请创建 Issue
+
+            ### 📝 安装方式
+
+            与正式版本安装方式相同，但建议安装在独立目录进行测试。
+
+            ---
+
+            🔗 **相关链接**:
+            - [完整提交历史](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+            - [源代码](https://github.com/${{ github.repository }}/tree/${{ github.sha }})
+          files: release-files/*
+          draft: false
+          prerelease: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify build completion
+        run: |
+          echo "✅ 测试版本构建完成!"
+          echo "📦 版本号: test-${{ steps.get_info.outputs.date }}-${{ steps.get_info.outputs.commit_short }}"
+          echo "🔗 发布地址: ${{ steps.create_release.outputs.url }}"
+
+  # 构建状态通知
+  notify-status:
+    needs: [quick-build]
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check build status
+        run: |
+          if [ "${{ needs.quick-build.result }}" == "success" ]; then
+            echo "✅ 快速构建成功"
+            echo "📝 提交: ${{ github.sha }}"
+            echo "👤 提交者: ${{ github.actor }}"
+            echo "💡 提示: 如需完整的多平台构建，请手动触发 workflow"
+          else
+            echo "❌ 快速构建失败"
+            echo "📝 提交: ${{ github.sha }}"
+            echo "👤 提交者: ${{ github.actor }}"
+            echo "🔍 请检查构建日志以了解失败原因"
+          fi
