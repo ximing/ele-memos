@@ -11,7 +11,18 @@
     "make:x64": "electron-forge make --arch=\"x64\"",
     "make:arm64": "electron-forge make --arch=\"arm64\"",
     "publish": "electron-forge publish",
-    "lint": "eslint --ext .ts,.tsx ."
+    "lint": "eslint --ext .ts,.tsx .",
+    "release": "./scripts/release.sh",
+    "release:patch": "./scripts/release.sh patch",
+    "release:minor": "./scripts/release.sh minor",
+    "release:major": "./scripts/release.sh major",
+    "release:dry": "./scripts/release.sh patch --dry-run",
+    "bump": "./scripts/bump.sh",
+    "changelog": "./scripts/changelog.sh",
+    "changelog:preview": "./scripts/changelog.sh --preview",
+    "version:patch": "npm run changelog && npm run release:patch",
+    "version:minor": "npm run changelog && npm run release:minor",
+    "version:major": "npm run changelog && npm run release:major"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.3.0",
