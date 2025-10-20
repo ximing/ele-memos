@@ -18,6 +18,10 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write
+  discussions: write
+
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
